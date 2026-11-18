@@ -2,12 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { circulationService } from '@/services/circulationService'
 import {
   ROLE_LABELS,
+  SECRETARIAT_CODE_LABELS,
+  SECRETARIAT_CODES,
   type AppRole,
   type Direction,
   type GedAgent,
   type Profile,
+  type SecretariatCode,
   type Service,
 } from '@/types/ged'
+import { supabase } from '@/lib/supabase'
+import { FormBrandBar } from '@/modules/ged/components/DashboardShared'
 import { Loader2, Plus, Save, Search, UserCog, UserPlus, X } from 'lucide-react'
 
 const ALL_ROLES: AppRole[] = [
@@ -17,6 +22,7 @@ const ALL_ROLES: AppRole[] = [
   'directeur',
   'dir_administrative',
   'documentation_archives',
+  'controle',
 ]
 
 interface Props {
@@ -33,6 +39,8 @@ const emptyCreateForm = {
   direction_id: '',
   service_id: '',
   matr: '',
+  privilege: '1',
+  secretariat_code: '' as string,
 }
 
 export function ProfileManagement({ currentUserId }: Props) {
@@ -118,6 +126,8 @@ export function ProfileManagement({ currentUserId }: Props) {
       direction_id: p.direction_id ?? '',
       service_id: p.service_id ?? '',
       matr: p.matr ?? '',
+      privilege: String(p.privilege ?? 1),
+      secretariat_code: p.secretariat_code ?? '',
     })
   }
 
@@ -156,7 +166,7 @@ export function ProfileManagement({ currentUserId }: Props) {
         if (!form.matr.trim() || !form.password || !form.full_name.trim()) {
           throw new Error('Matricule, nom et mot de passe sont requis')
         }
-        const created = await circulationService.createAccount({
+        let created = await circulationService.createAccount({
           matr: form.matr.trim(),
           password: form.password,
           full_name: form.full_name.trim(),
@@ -164,14 +174,34 @@ export function ProfileManagement({ currentUserId }: Props) {
           role: form.role,
           direction_id: form.direction_id || null,
           service_id: form.service_id || null,
+          privilege: Number(form.privilege) || 1,
         })
+        if (form.role === 'secretariat' && form.secretariat_code) {
+          const { data: patched, error: patchErr } = await supabase
+            .from('tb_profiles')
+            .update({ secretariat_code: form.secretariat_code })
+            .eq('id', created.id)
+            .select('*, direction:tb_directions(*), service:tb_services(*)')
+            .single()
+          if (patchErr) throw patchErr
+          created = patched as Profile
+          await supabase
+            .from('TbLogin')
+            .update({ Profil: form.secretariat_code })
+            .eq('Matricule', form.matr.trim())
+        }
         setProfiles((prev) =>
           [...prev, created].sort((a, b) => a.full_name.localeCompare(b.full_name)),
         )
         setSuccess(`Compte créé pour le matricule ${created.matr}.`)
         setMode('edit')
         setEditing(created)
-        setForm((f) => ({ ...f, password: '' }))
+        setForm((f) => ({
+          ...f,
+          password: '',
+          privilege: String(created.privilege ?? form.privilege),
+          secretariat_code: created.secretariat_code ?? f.secretariat_code,
+        }))
       } else if (mode === 'edit' && editing) {
         if (!form.full_name.trim()) {
           throw new Error('Le nom complet est requis')
@@ -180,13 +210,30 @@ export function ProfileManagement({ currentUserId }: Props) {
           throw new Error('Choisissez une direction avant le service')
         }
 
-        const updated = await circulationService.updateProfile(editing.id, {
+        let updated = await circulationService.updateProfile(editing.id, {
           full_name: form.full_name.trim(),
           role: form.role,
           direction_id: form.direction_id || null,
           service_id: form.direction_id ? form.service_id || null : null,
           matr: form.matr.trim() || null,
+          privilege: Number(form.privilege) || 1,
         })
+        const secCode =
+          form.role === 'secretariat' ? form.secretariat_code || null : null
+        const { data: patched, error: patchErr } = await supabase
+          .from('tb_profiles')
+          .update({ secretariat_code: secCode })
+          .eq('id', updated.id)
+          .select('*, direction:tb_directions(*), service:tb_services(*)')
+          .single()
+        if (patchErr) throw patchErr
+        updated = patched as Profile
+        if (form.matr.trim() && form.role === 'secretariat' && secCode) {
+          await supabase
+            .from('TbLogin')
+            .update({ Profil: secCode })
+            .eq('Matricule', form.matr.trim())
+        }
         setProfiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
         setEditing(updated)
         setForm({
@@ -197,6 +244,8 @@ export function ProfileManagement({ currentUserId }: Props) {
           direction_id: updated.direction_id ?? '',
           service_id: updated.service_id ?? '',
           matr: updated.matr ?? '',
+          privilege: String(updated.privilege ?? 1),
+          secretariat_code: updated.secretariat_code ?? '',
         })
         setSuccess('Profil mis à jour avec succès.')
       }
@@ -234,6 +283,7 @@ export function ProfileManagement({ currentUserId }: Props) {
 
   return (
     <div className="space-y-5">
+      <FormBrandBar title="Gestion des profils" />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 text-lg font-medium text-slate-900">
@@ -338,6 +388,9 @@ export function ProfileManagement({ currentUserId }: Props) {
                     <td className="px-4 py-3">
                       <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                         {ROLE_LABELS[p.role]}
+                      </span>
+                      <span className="mt-1 block text-[11px] text-slate-400">
+                        Priv. {p.privilege ?? 1}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
@@ -461,6 +514,10 @@ export function ProfileManagement({ currentUserId }: Props) {
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-teal-600/30 focus:ring-2"
                       placeholder="Mot de passe de connexion"
                     />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Si le matricule a déjà un login métier, il sera rattaché
+                      au compte GED (mot de passe mis à jour).
+                    </span>
                   </label>
                   <label className="block">
                     <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -499,7 +556,14 @@ export function ProfileManagement({ currentUserId }: Props) {
                 <select
                   value={form.role}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, role: e.target.value as AppRole }))
+                    setForm((f) => ({
+                      ...f,
+                      role: e.target.value as AppRole,
+                      secretariat_code:
+                        e.target.value === 'secretariat'
+                          ? f.secretariat_code
+                          : '',
+                    }))
                   }
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-teal-600/30 focus:ring-2"
                 >
@@ -509,6 +573,56 @@ export function ProfileManagement({ currentUserId }: Props) {
                     </option>
                   ))}
                 </select>
+              </label>
+
+              {form.role === 'secretariat' && (
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Bureau Sec_* (TbLogin.Profil)
+                  </span>
+                  <select
+                    required
+                    value={form.secretariat_code}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        secretariat_code: e.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-teal-600/30 focus:ring-2"
+                  >
+                    <option value="">Choisir le bureau…</option>
+                    {SECRETARIAT_CODES.map((c) => (
+                      <option key={c} value={c}>
+                        {c} — {SECRETARIAT_CODE_LABELS[c as SecretariatCode]}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Isolement strict : ce bureau ne voit que ses propres
+                    courriers (sauf Superuser).
+                  </span>
+                </label>
+              )}
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Privilège
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={form.privilege}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, privilege: e.target.value }))
+                  }
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none ring-teal-600/30 focus:ring-2"
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Contrôle &amp; Audit : privilège &gt; 10 pour éditer les
+                  documents financiers (sans pouvoir d’aval).
+                </span>
               </label>
 
               <label className="block">

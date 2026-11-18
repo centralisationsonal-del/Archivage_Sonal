@@ -17,4 +17,11 @@ export const format = {
       minute: '2-digit',
     }).format(new Date(value))
   },
+  money(value: number | null | undefined, devise = 'CDF') {
+    const n = Number(value ?? 0)
+    return `${new Intl.NumberFormat('fr-FR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n)} ${devise}`
+  },
 }

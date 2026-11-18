@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
-import { Archive, Loader2, LogIn } from 'lucide-react'
+import { SonalLogo } from '@/modules/ged/components/SonalLogo'
+import { Loader2, LogIn, X } from 'lucide-react'
 
 export function LoginPage() {
   const { signIn } = useAuth()
@@ -22,76 +23,106 @@ export function LoginPage() {
     }
   }
 
+  function handleQuit() {
+    setMatr('')
+    setPassword('')
+    setError(null)
+    window.close()
+    window.setTimeout(() => {
+      window.location.replace('about:blank')
+    }, 150)
+  }
+
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_#0f766e22,_transparent_55%),linear-gradient(160deg,#0b1f2a_0%,#0f3d3a_45%,#134e4a_100%)]" />
-      <div className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:url('data:image/svg+xml,%3Csvg width=%2760%27 height=%2760%27 viewBox=%270 0 60 60%27 xmlns=%27http://www.w3.org/2000/svg%27%3E%3Cg fill=%27none%27 fill-rule=%27evenodd%27%3E%3Cg fill=%27%23ffffff%27 fill-opacity=%271%27%3E%3Cpath d=%27M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z%27/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')]" />
+    <div className="login-sonal-page relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+      <div className="login-sonal-orb login-sonal-orb--blue pointer-events-none absolute" aria-hidden />
+      <div className="login-sonal-orb login-sonal-orb--red pointer-events-none absolute" aria-hidden />
+      <div className="login-sonal-grid pointer-events-none absolute inset-0" aria-hidden />
 
-      <div className="relative w-full max-w-md">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-teal-100 ring-1 ring-white/20 backdrop-blur">
-            <Archive className="h-7 w-7" />
+      <div className="relative w-full max-w-md animate-[loginFadeUp_0.7s_ease-out_both]">
+        <div className="login-sonal-card overflow-hidden rounded-2xl border border-[#0088ff]/40 shadow-[0_0_48px_rgba(0,136,255,0.22)]">
+          {/* Bandeau marque */}
+          <div className="relative border-b border-[#0088ff]/20 px-8 pb-6 pt-8 text-center">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_80%_at_50%_0%,rgba(0,136,255,0.18),transparent_70%)]" />
+            <div className="relative mx-auto mb-3 inline-flex">
+              <SonalLogo size="hero" className="rounded-2xl bg-transparent p-0 shadow-none ring-0" />
+            </div>
+            <p className="font-brand-sonal text-[#0088ff]">SONAL</p>
+            <p className="mt-2 text-sm text-sky-200/75">
+              Archivage numérique & circulation du courrier
+            </p>
           </div>
-          <h1 className="font-display text-4xl tracking-tight text-white">SONAL</h1>
-          <p className="mt-2 text-sm text-teal-100/80">
-            Archivage numérique & circulation du courrier
-          </p>
-        </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="rounded-2xl border border-white/10 bg-white/95 p-6 shadow-2xl shadow-black/20 backdrop-blur"
-        >
-          <h2 className="mb-5 text-lg font-medium text-slate-900">Connexion</h2>
-
-          <div className="space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">
+          {/* Formulaire */}
+          <form className="space-y-4 px-8 py-7" onSubmit={handleSubmit}>
+            <div className="space-y-1.5">
+              <label htmlFor="matr" className="block text-sm font-medium text-sky-100/90">
                 Matricule
-              </span>
+              </label>
               <input
+                id="matr"
                 required
                 autoComplete="username"
                 value={matr}
                 onChange={(e) => setMatr(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 outline-none ring-teal-600/30 focus:ring-2"
                 placeholder="Ex. 1364"
+                className="w-full rounded-xl border border-[#0088ff]/30 bg-black/45 px-3.5 py-3 text-sm text-sky-50 outline-none transition-[border-color,box-shadow] placeholder:text-sky-200/35 focus:border-[#0088ff]/70 focus:ring-4 focus:ring-[#0088ff]/20"
               />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="pass" className="block text-sm font-medium text-sky-100/90">
                 Mot de passe
-              </span>
+              </label>
               <input
+                id="pass"
                 required
                 type="password"
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 outline-none ring-teal-600/30 focus:ring-2"
+                className="w-full rounded-xl border border-[#0088ff]/30 bg-black/45 px-3.5 py-3 text-sm text-sky-50 outline-none transition-[border-color,box-shadow] focus:border-[#0088ff]/70 focus:ring-4 focus:ring-[#0088ff]/20"
               />
-            </label>
-          </div>
+            </div>
 
-          {error && (
-            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-60"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <LogIn className="h-4 w-4" />
+            {error && (
+              <div className="rounded-xl border border-red-400/40 bg-red-950/55 px-3.5 py-2.5 text-sm text-red-200">
+                {error}
+              </div>
             )}
-            Se connecter
-          </button>
-        </form>
+
+            <div className="flex flex-col gap-2.5 pt-1">
+              <button
+                type="submit"
+                disabled={loading}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0088ff] px-4 py-3 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(0,136,255,0.35)] transition-colors hover:bg-[#0077ee] disabled:opacity-60"
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <LogIn className="h-4 w-4" />
+                )}
+                {loading ? 'Connexion…' : 'Se connecter'}
+              </button>
+              <button
+                type="button"
+                onClick={handleQuit}
+                disabled={loading}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-200/15 bg-transparent px-4 py-2.5 text-sm font-medium text-sky-200/70 transition-colors hover:border-sky-200/30 hover:bg-white/5 hover:text-sky-100 disabled:opacity-60"
+              >
+                <X className="h-4 w-4" />
+                Quitter
+              </button>
+            </div>
+          </form>
+
+          <p className="border-t border-[#0088ff]/15 px-8 py-4 text-center text-xs leading-relaxed text-sky-200/45">
+            Accès selon le rôle GED · Documentation & Archives
+          </p>
+        </div>
+
+        <p className="mt-5 text-center text-[11px] tracking-[0.16em] text-sky-200/40 uppercase">
+          SONAL S.A. · Pour le Social
+        </p>
       </div>
     </div>
   )

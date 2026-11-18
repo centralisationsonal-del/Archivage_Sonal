@@ -1,31 +1,14 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { format } from '@/lib/format'
+import { drawPdfEtatHeader, loadReportLogoDataUrl } from '@/modules/ged/lib/pdfEtatHeader'
 import { ROLE_LABELS, type DocumentReportRow, type Profile } from '@/types/ged'
-
-const LOGO_PATH = '/assets/New_Logo_Sonal_avec_Texte.jpg'
 
 /** Bleu institutionnel SONAL */
 const SONAL_BLUE: [number, number, number] = [15, 76, 117]
 const SONAL_BLUE_LIGHT: [number, number, number] = [232, 241, 248]
 const INK: [number, number, number] = [30, 41, 59]
 const MUTED: [number, number, number] = [100, 116, 139]
-
-async function loadLogoDataUrl(): Promise<string | null> {
-  try {
-    const res = await fetch(LOGO_PATH)
-    if (!res.ok) return null
-    const blob = await res.blob()
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result))
-      reader.onerror = () => reject(reader.error)
-      reader.readAsDataURL(blob)
-    })
-  } catch {
-    return null
-  }
-}
 
 function stampFooter(doc: jsPDF, edition: string) {
   const total = doc.getNumberOfPages()
@@ -58,52 +41,17 @@ function drawHeader(
 ): number {
   const pageW = doc.internal.pageSize.getWidth()
   const marginX = 28
-  const logoW = 168
-  const logoH = (logoW * 52) / 168
-  const logoY = 18
 
-  if (logo) {
-    try {
-      doc.addImage(logo, 'JPEG', marginX, logoY, logoW, logoH)
-    } catch {
-      // ignore logo errors
-    }
-  } else {
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(16)
-    doc.setTextColor(...SONAL_BLUE)
-    doc.text('SONAL S.A.', marginX, logoY + 22)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
-    doc.setTextColor(...INK)
-    doc.text('Société Nationale de Loterie', marginX, logoY + 34)
-  }
-
-  // Bloc titre à droite
-  const rightX = pageW - marginX
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.setTextColor(...SONAL_BLUE)
-  doc.text('RAPPORT DE CIRCUIT DOCUMENTAIRE', rightX, logoY + 18, {
-    align: 'right',
+  const ruleY = drawPdfEtatHeader(doc, logo, {
+    title: "RAPPORT D'ARCHIVAGE — RÉCAPITULATIF DE CIRCUIT",
+    linesRight: [
+      'Format A4 — Orientation paysage',
+      `${meta.resultCount} document(s)`,
+    ],
+    blue: SONAL_BLUE,
+    ink: INK,
+    marginX,
   })
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8.5)
-  doc.setTextColor(...INK)
-  doc.text('Format A4 — Orientation paysage', rightX, logoY + 30, {
-    align: 'right',
-  })
-  doc.text(`${meta.resultCount} document(s)`, rightX, logoY + 42, {
-    align: 'right',
-  })
-
-  const ruleY = logoY + logoH + 10
-  doc.setDrawColor(...SONAL_BLUE)
-  doc.setLineWidth(1.1)
-  doc.line(marginX, ruleY, pageW - marginX, ruleY)
-  doc.setLineWidth(0.4)
-  doc.line(marginX, ruleY + 3, pageW - marginX, ruleY + 3)
 
   // Bandeau métadonnées
   const metaY = ruleY + 16
@@ -139,7 +87,7 @@ export async function exportDocumentReportPdf(params: {
 }) {
   const { rows, profile, periodLabel } = params
   const edition = format.datetime(new Date().toISOString())
-  const logo = await loadLogoDataUrl()
+  const logo = await loadReportLogoDataUrl()
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
@@ -161,14 +109,15 @@ export async function exportDocumentReportPdf(params: {
   }
 
   const colW = {
-    0: Math.round(usable * 0.13), // Nom
-    1: Math.round(usable * 0.1), // Date
-    2: Math.round(usable * 0.12), // Émetteur
-    3: Math.round(usable * 0.12), // Destinataire
-    4: Math.round(usable * 0.2), // Objet
-    5: Math.round(usable * 0.12), // Référence
-    6: Math.round(usable * 0.07), // Folio
-    7: Math.round(usable * 0.14), // Circuit
+    0: Math.round(usable * 0.14), // Nom
+    1: Math.round(usable * 0.06), // Ext
+    2: Math.round(usable * 0.1), // Date
+    3: Math.round(usable * 0.11), // Émetteur
+    4: Math.round(usable * 0.11), // Destinataire
+    5: Math.round(usable * 0.16), // Objet
+    6: Math.round(usable * 0.1), // Référence
+    7: Math.round(usable * 0.06), // Folio
+    8: Math.round(usable * 0.16), // Circuit
   }
 
   autoTable(doc, {
@@ -176,7 +125,8 @@ export async function exportDocumentReportPdf(params: {
     head: [
       [
         'Nom document',
-        'Date envoi',
+        'Ext.',
+        'Date',
         'Émetteur',
         'Destinataire',
         'Objet',
@@ -187,6 +137,7 @@ export async function exportDocumentReportPdf(params: {
     ],
     body: rows.map((r, idx) => [
       { content: String(idx + 1) + '. ' + r.nom_document },
+      r.extension || '—',
       format.datetime(r.date_envoye),
       r.emetteur,
       r.destinataire,
@@ -198,36 +149,42 @@ export async function exportDocumentReportPdf(params: {
     margin: { left: marginX, right: marginX, top: 18, bottom: 36 },
     styles: {
       font: 'helvetica',
-      fontSize: 7.5,
-      cellPadding: { top: 4, right: 3, bottom: 4, left: 3 },
+      fontSize: 7,
+      cellPadding: { top: 3.5, right: 2.5, bottom: 3.5, left: 2.5 },
       overflow: 'linebreak',
       valign: 'middle',
       textColor: INK,
       lineColor: [203, 213, 225],
       lineWidth: 0.3,
-      minCellHeight: 16,
+      minCellHeight: 15,
     },
     headStyles: {
       fillColor: SONAL_BLUE,
       textColor: 255,
       fontStyle: 'bold',
-      fontSize: 8,
+      fontSize: 7.5,
       halign: 'center',
       valign: 'middle',
-      cellPadding: 5,
+      cellPadding: 4,
     },
     alternateRowStyles: {
       fillColor: [248, 250, 252],
     },
     columnStyles: {
       0: { cellWidth: colW[0], fontStyle: 'bold' },
-      1: { cellWidth: colW[1], halign: 'center' },
-      2: { cellWidth: colW[2] },
+      1: { cellWidth: colW[1], halign: 'center', fontStyle: 'bold' },
+      2: { cellWidth: colW[2], halign: 'center' },
       3: { cellWidth: colW[3] },
       4: { cellWidth: colW[4] },
       5: { cellWidth: colW[5] },
-      6: { cellWidth: colW[6], halign: 'center', fontStyle: 'bold', textColor: SONAL_BLUE },
-      7: { cellWidth: colW[7], fontSize: 7 },
+      6: { cellWidth: colW[6] },
+      7: {
+        cellWidth: colW[7],
+        halign: 'center',
+        fontStyle: 'bold',
+        textColor: SONAL_BLUE,
+      },
+      8: { cellWidth: colW[8], fontSize: 6.5 },
     },
     didDrawPage: (data) => {
       // En-tête réduit sur pages suivantes
@@ -235,7 +192,7 @@ export async function exportDocumentReportPdf(params: {
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(9)
         doc.setTextColor(...SONAL_BLUE)
-        doc.text('SONAL S.A. — Rapport de circuit (suite)', marginX, 22)
+        doc.text("SONAL S.A. — Rapport d'archivage (suite)", marginX, 22)
         doc.setDrawColor(...SONAL_BLUE)
         doc.setLineWidth(0.6)
         doc.line(marginX, 28, pageW - marginX, 28)

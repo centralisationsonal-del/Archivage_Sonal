@@ -1,0 +1,17 @@
+---
+description: Messages de build, déploiement et échanges en français
+alwaysApply: true
+---
+
+# Langue française — build, déploiement et messages
+
+- Communiquer avec l’utilisateur **en français** (statuts, erreurs, résumés).
+- Lors d’un build ou d’un déploiement, annoncer les étapes et le résultat en français, par ex. :
+  - « Compilation en cours… »
+  - « Build réussi »
+  - « Déploiement Netlify en cours… »
+  - « Mise en ligne réussie » + URL
+  - « Échec du build / du déploiement » + cause courte
+- Les textes d’interface applicative, libellés, messages d’erreur utilisateur et documents générés restent en français.
+- Ne pas basculer les comptes-rendus techniques (build/deploy) en anglais, sauf citation brute d’un log d’outil si nécessaire.
+- Scripts npm préférés : `npm run build:fr` et `npm run deploy:fr` (messages console en français).

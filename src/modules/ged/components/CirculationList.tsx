@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { STATUS_LABELS, PARCOURS_LABELS, type Circulation } from '@/types/ged'
 import { format } from '@/lib/format'
+import { formatDocumentAge } from '@/modules/ged/lib/archivePrivileges'
 import { Eye, FileText } from 'lucide-react'
 
 interface Props {
@@ -16,6 +17,7 @@ const statusTone: Record<string, string> = {
   recu: 'bg-teal-50 text-teal-800 ring-teal-200',
   traite: 'bg-slate-100 text-slate-700 ring-slate-200',
   repondu: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
+  en_attente_aval: 'bg-amber-50 text-amber-900 ring-amber-200',
 }
 
 export function CirculationList({
@@ -35,52 +37,70 @@ export function CirculationList({
 
   return (
     <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
-      {items.map((item) => (
-        <li
-          key={item.id}
-          className="flex flex-col gap-3 px-4 py-4 transition hover:bg-slate-50/80 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <button
-            type="button"
-            className="min-w-0 flex-1 text-left"
-            onClick={() => onSelect?.(item)}
+      {items.map((item) => {
+        const creation =
+          item.archive?.date_creation ||
+          item.archive?.date_doc ||
+          item.created_at?.slice(0, 10)
+        return (
+          <li
+            key={item.id}
+            className="flex flex-col gap-3 px-4 py-4 transition hover:bg-slate-50/80 sm:flex-row sm:items-center sm:justify-between"
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium text-slate-900">
-                {item.archive?.concerne ?? 'Document'}
-              </span>
-              <span
-                className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusTone[item.status]}`}
-              >
-                {STATUS_LABELS[item.status]}
-              </span>
-              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                {PARCOURS_LABELS[item.parcours_type]}
-              </span>
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-left"
+              onClick={() => onSelect?.(item)}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-slate-900">
+                  {item.archive?.concerne ?? 'Document'}
+                </span>
+                <span
+                  className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${statusTone[item.status] ?? 'bg-slate-100 text-slate-700 ring-slate-200'}`}
+                >
+                  {STATUS_LABELS[item.status]}
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                  {PARCOURS_LABELS[item.parcours_type]}
+                </span>
+                {item.archive?.entite && (
+                  <span className="rounded-md bg-sky-50 px-2 py-0.5 text-xs text-[#0f4c75]">
+                    {item.archive.entite}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                De {item.sender?.full_name ?? '—'}
+                {item.receiver ? ` → ${item.receiver.full_name}` : ''}
+                {' · '}
+                Création {format.date(creation)}
+                {' · Âge '}
+                {formatDocumentAge(creation)}
+                {item.archive?.reference
+                  ? ` · Réf. ${item.archive.reference}`
+                  : ''}
+                {item.archive?.num_folio
+                  ? ` · Folio ${item.archive.num_folio}`
+                  : ''}
+              </p>
+            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {actionSlot?.(item)}
+              {onSelect && (
+                <button
+                  type="button"
+                  onClick={() => onSelect(item)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-white"
+                >
+                  <Eye className="h-4 w-4" />
+                  Détail
+                </button>
+              )}
             </div>
-            <p className="mt-1 text-sm text-slate-500">
-              De {item.sender?.full_name ?? '—'}
-              {item.receiver ? ` → ${item.receiver.full_name}` : ''}
-              {' · '}
-              {format.datetime(item.created_at)}
-              {item.archive?.num_folio ? ` · Folio ${item.archive.num_folio}` : ''}
-            </p>
-          </button>
-          <div className="flex shrink-0 items-center gap-2">
-            {actionSlot?.(item)}
-            {onSelect && (
-              <button
-                type="button"
-                onClick={() => onSelect(item)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-white"
-              >
-                <Eye className="h-4 w-4" />
-                Détail
-              </button>
-            )}
-          </div>
-        </li>
-      ))}
+          </li>
+        )
+      })}
     </ul>
   )
 }

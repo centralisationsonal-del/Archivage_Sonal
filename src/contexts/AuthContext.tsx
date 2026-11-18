@@ -18,6 +18,8 @@ interface LoginPayload {
   full_name: string
   profil: string
   role: AppRole
+  privilege?: number | null
+  secretariat_code?: string | null
   direction_id: string | null
   service_id: string | null
   email: string
@@ -33,13 +35,32 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+/** Évite les re-renders / remounts quand le contenu profil est inchangé */
+function sameProfile(a: Profile | null, b: Profile | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.id === b.id &&
+    a.full_name === b.full_name &&
+    a.email === b.email &&
+    a.role === b.role &&
+    a.direction_id === b.direction_id &&
+    a.service_id === b.service_id &&
+    a.matr === b.matr &&
+    (a.secretariat_code ?? null) === (b.secretariat_code ?? null) &&
+    (a.privilege ?? null) === (b.privilege ?? null) &&
+    (a.direction?.libelle ?? null) === (b.direction?.libelle ?? null) &&
+    (a.service?.libelle ?? null) === (b.service?.libelle ?? null)
+  )
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
 
   const refreshProfile = useCallback(async () => {
     const p = await circulationService.getCurrentProfile()
-    setProfile(p)
+    setProfile((prev) => (sameProfile(prev, p) ? prev : p))
   }, [])
 
   useEffect(() => {
@@ -51,7 +72,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     })()
 
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      // Évite les rafraîchissements inutiles (JWT, session initiale) qui font bouger l’UI.
+      if (
+        event === 'INITIAL_SESSION' ||
+        event === 'TOKEN_REFRESHED'
+      ) {
+        return
+      }
       void refreshProfile()
     })
     return () => sub.subscription.unsubscribe()
@@ -95,6 +123,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             matr,
             full_name: login.full_name,
             role: login.role,
+            privilege:
+              login.privilege != null ? Number(login.privilege) : undefined,
+            secretariat_code: login.secretariat_code ?? null,
             direction_id: login.direction_id,
             service_id: login.service_id,
             updated_at: new Date().toISOString(),

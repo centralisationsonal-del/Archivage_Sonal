@@ -12,7 +12,7 @@ npm run dev
 Variables d’environnement (fichier `.env`) :
 
 ```
-VITE_SUPABASE_URL=https://tkrknknfripnnqgevclw.supabase.co
+VITE_SUPABASE_URL=https://kfpkjllfaiqkvsjoaiqv.supabase.co
 VITE_SUPABASE_ANON_KEY=votre_cle_publishable
 ```
 
@@ -40,3 +40,4 @@ Projet Supabase principal : `kfpkjllfaiqkvsjoaiqv` (centralisation SONAL).
 - Tables GED : `tb_archives`, `tb_circulations`, `tb_profiles`, …
 - Agents RH : vue `v_ged_agents` + RPC `ged_list_agents` (depuis `TbPersonnels`)
 - Directions / services : seedés depuis `TbPersonnels.Direct` / `Service` (7 directions, 24 services, ~383 agents actifs)
+- Le tableau Activité documentaire dépend du RPC `ged_profile_activity_stats`, créé par `supabase/migrations/026_ged_profile_communications.sql`. Appliquer les migrations au projet configuré dans `.env` si ce RPC est absent.

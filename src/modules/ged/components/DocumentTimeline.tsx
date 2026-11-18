@@ -1,6 +1,14 @@
 import { format } from '@/lib/format'
 import type { CirculationEvent } from '@/types/ged'
-import { CheckCircle2, FileText, Forward, Inbox, Send } from 'lucide-react'
+import {
+  CheckCircle2,
+  FileText,
+  Forward,
+  Inbox,
+  Send,
+  ThumbsDown,
+  ThumbsUp,
+} from 'lucide-react'
 
 const EVENT_ICONS: Record<string, typeof FileText> = {
   created: FileText,
@@ -8,6 +16,9 @@ const EVENT_ICONS: Record<string, typeof FileText> = {
   expedited: Send,
   received: Inbox,
   processed: CheckCircle2,
+  claimed: Inbox,
+  aval_favorable: ThumbsUp,
+  aval_defavorable: ThumbsDown,
 }
 
 interface Props {

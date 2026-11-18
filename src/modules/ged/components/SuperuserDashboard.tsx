@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ArchivesPurgePanel } from '@/modules/ged/components/ArchivesPurgePanel'
+import { ArchivesSearchPanel } from '@/modules/ged/components/ArchivesSearchPanel'
 import { CirculationList } from '@/modules/ged/components/CirculationList'
 import { CreateDocumentForm } from '@/modules/ged/components/CreateDocumentForm'
 import { DocumentPdfReader, PdfPreviewPanel } from '@/modules/ged/components/DocumentPdfReader'
+import { DocumentReport } from '@/modules/ged/components/DocumentReport'
+import { DemandeDocRequesterPanel } from '@/modules/ged/components/DemandeDocRequesterPanel'
+import { FinancialReport } from '@/modules/ged/components/FinancialReport'
 import { DocumentTimeline } from '@/modules/ged/components/DocumentTimeline'
 import { circulationService } from '@/services/circulationService'
 import { format } from '@/lib/format'
+import { formatDocumentAge } from '@/modules/ged/lib/archivePrivileges'
 import {
   PARCOURS_LABELS,
   STATUS_LABELS,
@@ -15,18 +21,26 @@ import {
   type ParcoursType,
   type Profile,
 } from '@/types/ged'
+import { AgendaChefPanel } from '@/modules/ged/components/AgendaChefPanel'
+import { BackupRestorePanel } from '@/modules/ged/components/BackupRestorePanel'
 import { ProfileManagement } from '@/modules/ged/components/ProfileManagement'
+import { DashboardHeader } from '@/modules/ged/components/DashboardShared'
 import {
   Activity,
   ArrowRightLeft,
   BookOpen,
   Building2,
+  CalendarDays,
   Clock3,
+  Database,
+  FileBarChart,
   FileStack,
   FileText,
   Filter,
   Megaphone,
   RefreshCw,
+  Search,
+  Trash2,
   UserCog,
   Users,
 } from 'lucide-react'
@@ -35,7 +49,21 @@ interface Props {
   profile: Profile
 }
 
-type Tab = 'vue' | 'flux' | 'parcours' | 'folios' | 'lecture' | 'profils' | 'diffusion'
+type Tab =
+  | 'vue'
+  | 'flux'
+  | 'parcours'
+  | 'folios'
+  | 'rechercher'
+  | 'purge'
+  | 'rapport'
+  | 'rapport_financier'
+  | 'demande_archives'
+  | 'lecture'
+  | 'profils'
+  | 'agenda'
+  | 'sauvegarde'
+  | 'diffusion'
 
 const PARCOURS_ORDER: ParcoursType[] = ['P1', 'P2', 'P3', 'P4', 'BROADCAST']
 const STATUS_ORDER: CirculationStatus[] = [
@@ -114,8 +142,15 @@ export function SuperuserDashboard({ profile }: Props) {
     { id: 'flux', label: 'Flux documentaire', icon: ArrowRightLeft },
     { id: 'parcours', label: 'Parcours P1–P4', icon: Filter },
     { id: 'folios', label: 'Registre folios', icon: BookOpen },
+    { id: 'rechercher', label: 'Rechercher', icon: Search },
+    { id: 'purge', label: 'Purge âge', icon: Trash2 },
+    { id: 'rapport', label: 'Rapport', icon: FileBarChart },
+    { id: 'rapport_financier', label: 'Financier', icon: FileBarChart },
+    { id: 'demande_archives', label: 'Demande Archives', icon: FileText },
     { id: 'lecture', label: 'Lecture PDF', icon: FileText },
     { id: 'profils', label: 'Gestion profils', icon: UserCog },
+    { id: 'agenda', label: 'Agenda du Chef', icon: CalendarDays },
+    { id: 'sauvegarde', label: 'Sauvegarde & Restauration', icon: Database },
     { id: 'diffusion', label: 'Diffusion générale', icon: Megaphone },
   ]
 
@@ -152,28 +187,21 @@ export function SuperuserDashboard({ profile }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-teal-800/70">
-            Superuser · Direction Administrative
-          </p>
-          <h2 className="font-display mt-1 text-3xl text-slate-900">
-            Pilotage GED
-          </h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Vue transverse des circulations inter/intra-directions, files
-            secrétariat, parcours P1–P4 et diffusion générale.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Actualiser
-        </button>
-      </div>
+      <DashboardHeader
+        eyebrow="Superuser"
+        title="Pilotage GED"
+        subtitle="Vue transverse des circulations inter/intra-directions, files secrétariat, parcours P1–P4 et diffusion générale."
+        action={
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Actualiser
+          </button>
+        }
+      />
 
       {/* KPIs */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -470,6 +498,7 @@ export function SuperuserDashboard({ profile }: Props) {
               <tr>
                 <th className="px-4 py-3">Folio</th>
                 <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Âge</th>
                 <th className="px-4 py-3">Concerne</th>
                 <th className="px-4 py-3">Référence</th>
                 <th className="px-4 py-3">Émetteur</th>
@@ -479,38 +508,64 @@ export function SuperuserDashboard({ profile }: Props) {
             <tbody className="divide-y divide-slate-100">
               {data.folios.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
                     Aucun folio enregistré globalement
                   </td>
                 </tr>
               ) : (
-                data.folios.map((f) => (
-                  <tr key={f.id} className="hover:bg-slate-50/80">
-                    <td className="px-4 py-3 font-medium text-teal-800">
-                      {f.num_folio}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {format.date(f.date_doc)}
-                    </td>
-                    <td className="px-4 py-3 text-slate-800">{f.concerne}</td>
-                    <td className="px-4 py-3 text-slate-500">
-                      {f.reference ?? '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{f.emetteur ?? '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {f.recepteur ?? '—'}
-                    </td>
-                  </tr>
-                ))
+                data.folios.map((f) => {
+                  const creation = f.date_creation || f.date_doc
+                  return (
+                    <tr key={f.id} className="hover:bg-slate-50/80">
+                      <td className="px-4 py-3 font-medium text-teal-800">
+                        {f.num_folio}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {format.date(creation)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {formatDocumentAge(creation)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-800">{f.concerne}</td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {f.reference ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{f.emetteur ?? '—'}</td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {f.recepteur ?? '—'}
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
         </div>
       )}
 
+      {tab === 'rechercher' && (
+        <ArchivesSearchPanel
+          profile={profile}
+          scope="docs"
+          lockedEntite={undefined}
+        />
+      )}
+
+      {tab === 'purge' && <ArchivesPurgePanel onPurged={() => void load()} />}
+
       {tab === 'lecture' && <DocumentPdfReader profile={profile} />}
 
+      {tab === 'rapport' && <DocumentReport profile={profile} />}
+      {tab === 'rapport_financier' && <FinancialReport profile={profile} />}
+      {tab === 'demande_archives' && (
+        <DemandeDocRequesterPanel profile={profile} />
+      )}
+
       {tab === 'profils' && <ProfileManagement currentUserId={profile.id} />}
+
+      {tab === 'agenda' && <AgendaChefPanel profile={profile} />}
+
+      {tab === 'sauvegarde' && <BackupRestorePanel profile={profile} />}
 
       {tab === 'diffusion' && (
         <div className="space-y-3">

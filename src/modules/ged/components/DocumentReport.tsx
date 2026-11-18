@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react'
 import { circulationService } from '@/services/circulationService'
+import { exportDocumentReportExcel } from '@/modules/ged/lib/exportDocumentReportExcel'
 import { exportDocumentReportPdf } from '@/modules/ged/lib/exportDocumentReportPdf'
+import { ReportEtatHeader } from '@/modules/ged/components/DashboardShared'
 import { format } from '@/lib/format'
 import type {
   DocumentReportFilters,
   DocumentReportRow,
   Profile,
 } from '@/types/ged'
-import { FileDown, Loader2, Search } from 'lucide-react'
+import { FileDown, FileSpreadsheet, Loader2, Search } from 'lucide-react'
 
 interface Props {
   profile: Profile
@@ -24,7 +26,7 @@ export function DocumentReport({ profile }: Props) {
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [printing, setPrinting] = useState(false)
+  const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null)
 
   const periodLabel = useMemo(() => {
     const from = filters.dateFrom ? format.date(filters.dateFrom) : '…'
@@ -71,7 +73,7 @@ export function DocumentReport({ profile }: Props) {
 
   async function exportPdf() {
     if (rows.length === 0) return
-    setPrinting(true)
+    setExporting('pdf')
     setError(null)
     try {
       await exportDocumentReportPdf({
@@ -84,30 +86,50 @@ export function DocumentReport({ profile }: Props) {
         err instanceof Error ? err.message : 'Échec de la génération du PDF',
       )
     } finally {
-      setPrinting(false)
+      setExporting(null)
+    }
+  }
+
+  function exportExcel() {
+    if (rows.length === 0) return
+    setExporting('excel')
+    setError(null)
+    try {
+      exportDocumentReportExcel({
+        rows,
+        profile,
+        periodLabel,
+      })
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Échec de la génération Excel',
+      )
+    } finally {
+      setExporting(null)
     }
   }
 
   const fieldClass =
     'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none ring-teal-600/30 focus:ring-2'
 
+  const isGlobal = profile.role === 'dir_administrative'
+
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="mb-4">
           <h3 className="text-base font-medium text-slate-900">
-            Rapport — recherche de circuit
+            Rapport d&apos;archivage — récapitulatif de circuit
           </h3>
           <p className="mt-1 text-sm text-slate-500">
-            Recherche périodique uniquement par dates d’envoi. Les colonnes
-            (nom, émetteur, destinataire, objet, référence, folio) s’affichent
-            dans les résultats. Export PDF A4 paysage.
+            Circuits de la période + documents archivés (toutes extensions)
+            {isGlobal ? ' — vue globale' : ''}. Export PDF A4 paysage et Excel.
           </p>
         </div>
 
         <form
           onSubmit={(e) => void handleSearch(e)}
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_auto_auto]"
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_auto_auto_auto]"
         >
           <label className="block">
             <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -165,15 +187,30 @@ export function DocumentReport({ profile }: Props) {
             <button
               type="button"
               onClick={() => void exportPdf()}
-              disabled={rows.length === 0 || printing}
+              disabled={rows.length === 0 || exporting !== null}
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-teal-700 bg-teal-50 px-4 py-2.5 text-sm font-medium text-teal-900 hover:bg-teal-100 disabled:opacity-50"
             >
-              {printing ? (
+              {exporting === 'pdf' ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <FileDown className="h-4 w-4" />
               )}
-              PDF A4 paysage
+              PDF
+            </button>
+          </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={exportExcel}
+              disabled={rows.length === 0 || exporting !== null}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-700 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+            >
+              {exporting === 'excel' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="h-4 w-4" />
+              )}
+              Excel
             </button>
           </div>
         </form>
@@ -186,22 +223,12 @@ export function DocumentReport({ profile }: Props) {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <img
-              src="/assets/New_Logo_Sonal_avec_Texte.jpg"
-              alt="SONAL S.A."
-              className="h-10 w-auto object-contain"
-            />
-            <div>
-              <p className="text-sm font-medium text-slate-800">
-                Résultats
-                {searched ? ` — ${rows.length}` : ''}
-              </p>
-              <p className="text-xs text-slate-500">{periodLabel}</p>
-            </div>
-          </div>
-        </div>
+        <ReportEtatHeader
+          title={
+            searched ? `Résultats — ${rows.length} document(s)` : 'Résultats'
+          }
+          subtitle={periodLabel}
+        />
 
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
@@ -209,7 +236,8 @@ export function DocumentReport({ profile }: Props) {
               <tr>
                 <th className="px-3 py-2.5 font-medium">N°</th>
                 <th className="px-3 py-2.5 font-medium">Nom document</th>
-                <th className="px-3 py-2.5 font-medium">Date envoi</th>
+                <th className="px-3 py-2.5 font-medium">Ext.</th>
+                <th className="px-3 py-2.5 font-medium">Date</th>
                 <th className="px-3 py-2.5 font-medium">Émetteur</th>
                 <th className="px-3 py-2.5 font-medium">Destinataire</th>
                 <th className="px-3 py-2.5 font-medium">Objet</th>
@@ -221,15 +249,15 @@ export function DocumentReport({ profile }: Props) {
             <tbody>
               {!searched && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-10 text-center text-slate-500">
                     Choisissez une période (date du / au) puis lancez la recherche.
                   </td>
                 </tr>
               )}
               {searched && rows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
-                    Aucun circuit trouvé pour cette période.
+                  <td colSpan={10} className="px-4 py-10 text-center text-slate-500">
+                    Aucun document / circuit trouvé pour cette période.
                   </td>
                 </tr>
               )}
@@ -241,6 +269,9 @@ export function DocumentReport({ profile }: Props) {
                   <td className="px-3 py-2.5 text-slate-500">{idx + 1}</td>
                   <td className="px-3 py-2.5 font-medium text-slate-900">
                     {r.nom_document}
+                  </td>
+                  <td className="px-3 py-2.5 font-medium text-[#0f4c75]">
+                    {r.extension || '—'}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
                     {format.datetime(r.date_envoye)}

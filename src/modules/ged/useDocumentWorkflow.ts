@@ -1,5 +1,8 @@
 import { useCallback, useState } from 'react'
-import { circulationService } from '@/services/circulationService'
+import {
+  circulationService,
+  type CreateProgressFn,
+} from '@/services/circulationService'
 import { detectParcoursType } from '@/modules/ged/workflowRules'
 import type {
   CreateDocumentInput,
@@ -11,6 +14,8 @@ import type {
 export function useDocumentWorkflow(profile: Profile | null) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState(0)
+  const [progressLabel, setProgressLabel] = useState('')
 
   const inferParcours = useCallback(
     (params: {
@@ -32,6 +37,12 @@ export function useDocumentWorkflow(profile: Profile | null) {
   const createAndRoute = useCallback(async (input: CreateDocumentInput) => {
     setLoading(true)
     setError(null)
+    setProgress(5)
+    setProgressLabel('Préparation…')
+    const onProgress: CreateProgressFn = (pct, _step, label) => {
+      setProgress(pct)
+      setProgressLabel(label)
+    }
     try {
       const parcoursType =
         input.parcoursType ||
@@ -41,13 +52,18 @@ export function useDocumentWorkflow(profile: Profile | null) {
           isBroadcast: input.parcoursType === 'BROADCAST',
         })
 
-      return await circulationService.createDocument({
-        ...input,
-        parcoursType,
-      })
+      return await circulationService.createDocument(
+        {
+          ...input,
+          parcoursType,
+        },
+        onProgress,
+      )
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Erreur de circulation'
       setError(message)
+      setProgress(0)
+      setProgressLabel('')
       throw e
     } finally {
       setLoading(false)
@@ -74,9 +90,10 @@ export function useDocumentWorkflow(profile: Profile | null) {
       reference?: string
       file: File
       note?: string
+      entite?: string
     }) => {
       if (profile?.role !== 'dir_administrative') {
-        throw new Error('Seul le rôle Direction Administrative peut diffuser')
+        throw new Error('Seul le rôle Superuser peut diffuser')
       }
       setLoading(true)
       setError(null)
@@ -96,6 +113,8 @@ export function useDocumentWorkflow(profile: Profile | null) {
   return {
     loading,
     error,
+    progress,
+    progressLabel,
     inferParcours,
     createAndRoute,
     orient,

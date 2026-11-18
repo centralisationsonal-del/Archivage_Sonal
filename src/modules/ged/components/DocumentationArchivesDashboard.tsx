@@ -1,12 +1,32 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArchivesGroupedRegister, groupedArchiveOptions } from '@/modules/ged/components/ArchivesGroupedRegister'
+import { ArchivesDemandesInbox } from '@/modules/ged/components/ArchivesDemandesInbox'
+import { ArchivesPdfReader } from '@/modules/ged/components/ArchivesPdfReader'
+import { ArchivesPurgePanel } from '@/modules/ged/components/ArchivesPurgePanel'
+import { ArchivesSearchPanel } from '@/modules/ged/components/ArchivesSearchPanel'
 import {
   DashboardHeader,
   DashboardKpi,
 } from '@/modules/ged/components/DashboardShared'
-import { DocumentPdfReader } from '@/modules/ged/components/DocumentPdfReader'
 import { DocumentReport } from '@/modules/ged/components/DocumentReport'
-import { circulationService } from '@/services/circulationService'
+import {
+  EntiteFilter,
+  useEntiteFilter,
+} from '@/modules/ged/components/EntiteFilter'
+import {
+  TransferProofModal,
+  type TransferProofPayload,
+} from '@/modules/ged/components/TransferProofModal'
+import { ACCEPTED_DOCUMENT_ACCEPT } from '@/lib/documentFiles'
 import { format } from '@/lib/format'
+import {
+  canManageDocsFull,
+  canPurgeByAge,
+  canSendArchives,
+  canUseInvisibleFlag,
+  formatDocumentAge,
+} from '@/modules/ged/lib/archivePrivileges'
+import { circulationService } from '@/services/circulationService'
 import type { Archive, Direction, Profile } from '@/types/ged'
 import {
   Archive as ArchiveIcon,
@@ -14,6 +34,7 @@ import {
   FileUp,
   Loader2,
   RefreshCw,
+  Search,
   Send,
 } from 'lucide-react'
 
@@ -21,9 +42,27 @@ interface Props {
   profile: Profile
 }
 
-type Tab = 'vue' | 'archiver' | 'envoyer' | 'registre' | 'lecture' | 'rapport'
+type Tab =
+  | 'vue'
+  | 'archiver'
+  | 'envoyer'
+  | 'rechercher'
+  | 'purge'
+  | 'demandes'
+  | 'registre'
+  | 'lecture'
+  | 'rapport'
 
 export function DocumentationArchivesDashboard({ profile }: Props) {
+  const canSend = canSendArchives(profile)
+  const canInvisible = canUseInvisibleFlag(profile)
+  const canPurge = canPurgeByAge(profile)
+  const docsFull = canManageDocsFull(profile)
+  const today = new Date().toISOString().slice(0, 10)
+
+  const loadEntites = useCallback(() => circulationService.listEntites(), [])
+  const { entites, entite, setEntite } = useEntiteFilter(loadEntites)
+
   const [tab, setTab] = useState<Tab>('vue')
   const [archives, setArchives] = useState<Archive[]>([])
   const [directions, setDirections] = useState<Direction[]>([])
@@ -32,26 +71,29 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  // Archiver form
   const [concerne, setConcerne] = useState('')
   const [reference, setReference] = useState('')
   const [numFolio, setNumFolio] = useState('')
   const [emetteur, setEmetteur] = useState('')
   const [recepteur, setRecepteur] = useState('')
   const [emplacement, setEmplacement] = useState('')
+  const [invisibleTous, setInvisibleTous] = useState(false)
   const [file, setFile] = useState<File | null>(null)
 
-  // Envoyer form
   const [archiveId, setArchiveId] = useState('')
   const [receiverDirectionId, setReceiverDirectionId] = useState('')
   const [note, setNote] = useState('')
   const [attachFile, setAttachFile] = useState<File | null>(null)
+  const [proofOpen, setProofOpen] = useState(false)
+  const [proof, setProof] = useState<TransferProofPayload | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const [a, d] = await Promise.all([
-        circulationService.listAllArchives(),
+        circulationService.listMyArchives(profile, 200, {
+          entite: entite || undefined,
+        }),
         circulationService.listDirections(),
       ])
       setArchives(a)
@@ -61,7 +103,7 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [profile, entite])
 
   useEffect(() => {
     void load()
@@ -70,6 +112,10 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
   async function handleArchive(e: React.FormEvent) {
     e.preventDefault()
     if (!file || !concerne) return
+    if (!entite) {
+      setError('Sélectionnez l’entité / instance de provenance.')
+      return
+    }
     setSaving(true)
     setError(null)
     setSuccess(null)
@@ -81,15 +127,22 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
         emetteur: emetteur || undefined,
         recepteur: recepteur || undefined,
         emplacement: emplacement || undefined,
+        invisibleTous: canInvisible ? invisibleTous : false,
+        ownerScope: 'documentation',
+        dateCreation: today,
+        entite,
         file,
       })
-      setSuccess(`Document archivé (n° ${archived.id}).`)
+      setSuccess(
+        `Document archivé (n° ${archived.id}) — ${entite} — création ${format.date(today)} — âge : ${formatDocumentAge(today)}.`,
+      )
       setConcerne('')
       setReference('')
       setNumFolio('')
       setEmetteur('')
       setRecepteur('')
       setEmplacement('')
+      setInvisibleTous(false)
       setFile(null)
       await load()
       setTab('registre')
@@ -102,6 +155,10 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
 
   async function handleDispatch(e: React.FormEvent) {
     e.preventDefault()
+    if (!canSend) {
+      setError('Privilège insuffisant pour envoyer des archives.')
+      return
+    }
     if (!archiveId || !receiverDirectionId) return
     setSaving(true)
     setError(null)
@@ -114,6 +171,17 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
         file: attachFile || undefined,
       })
       const dir = directions.find((d) => d.id === receiverDirectionId)
+      const arch = archives.find((a) => a.id === Number(archiveId))
+      setProof({
+        kind: 'docs_to_sec',
+        title: 'Envoi vers secrétariat de direction',
+        concerne: arch?.concerne,
+        reference: arch?.reference,
+        fromLabel: 'Documentation & Archives',
+        toLabels: [`Secrétariat ${dir?.libelle ?? ''}`.trim()],
+        note: note || undefined,
+      })
+      setProofOpen(true)
       setSuccess(
         `Document envoyé au secrétariat de la direction ${dir?.libelle ?? ''}.`,
       )
@@ -131,13 +199,20 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
 
   const withFile = archives.filter((a) => a.file_path).length
   const withFolio = archives.filter((a) => a.num_folio).length
+  const archiveGroups = useMemo(
+    () => groupedArchiveOptions(archives),
+    [archives],
+  )
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'vue', label: 'Tableau de bord' },
     { id: 'archiver', label: 'Archiver' },
-    { id: 'envoyer', label: 'Envoyer' },
-    { id: 'registre', label: 'Registre' },
-    { id: 'lecture', label: 'Lecture PDF' },
+    ...(canSend ? [{ id: 'envoyer' as const, label: 'Envoyer' }] : []),
+    { id: 'rechercher', label: 'Rechercher' },
+    ...(canPurge ? [{ id: 'purge' as const, label: 'Purge âge' }] : []),
+    { id: 'demandes', label: 'Demandes reçues' },
+    { id: 'registre', label: 'Registre classé' },
+    { id: 'lecture', label: 'Lecture' },
     { id: 'rapport', label: 'Rapport' },
   ]
 
@@ -149,7 +224,11 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
       <DashboardHeader
         eyebrow="Service Documentation & Archives"
         title="Gestion documentaire"
-        subtitle="Enregistrer, archiver et transmettre les documents aux directions"
+        subtitle={
+          docsFull
+            ? 'Privilège élevé — Invisible, envoi et purge disponibles'
+            : 'Classement et consultation — envoi réservé au privilège > 9'
+        }
         action={
           <button
             type="button"
@@ -161,6 +240,23 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
           </button>
         }
       />
+
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <EntiteFilter
+          value={entite}
+          options={entites}
+          onChange={setEntite}
+          required
+          label="Entité / instance (filtre listes & archivage)"
+          className="max-w-md"
+        />
+        {!entite && (
+          <p className="mt-2 text-xs text-amber-700">
+            Sélectionnez une entité pour lister, archiver et éditer uniquement
+            les documents de cette instance.
+          </p>
+        )}
+      </div>
 
       {(success || error) && (
         <div
@@ -231,11 +327,23 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
           <p className="font-medium text-slate-900">Mission du service</p>
           <ul className="mt-3 list-disc space-y-1.5 pl-5">
-            <li>Enregistrer et archiver les documents (avec pièce jointe PDF).</li>
             <li>
-              Les transmettre aux secrétariats des directions selon les demandes.
+              Archiver les documents avec date de création, folio et emplacement.
             </li>
-            <li>Tenir le registre et permettre la lecture des PDF.</li>
+            <li>
+              Retrouver un dossier par objet, référence, emplacement, dates,
+              expéditeur ou destinataire.
+            </li>
+            {docsFull ? (
+              <li>
+                Documents « Invisible de tous » et purge par âge (privilège &gt;
+                9).
+              </li>
+            ) : (
+              <li>
+                Envoi vers d’autres comptes réservé au privilège supérieur à 9.
+              </li>
+            )}
           </ul>
           <div className="mt-5 flex flex-wrap gap-2">
             <button
@@ -247,11 +355,21 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => setTab('envoyer')}
-              className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              onClick={() => setTab('rechercher')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
-              Envoyer à une direction
+              <Search className="h-4 w-4" />
+              Rechercher
             </button>
+            {canSend && (
+              <button
+                type="button"
+                onClick={() => setTab('envoyer')}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Envoyer à une direction
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -261,8 +379,22 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
           onSubmit={(e) => void handleArchive(e)}
           className="space-y-4 rounded-xl border border-slate-200 bg-white p-6"
         >
-          <h3 className="font-medium text-slate-900">Enregistrer / archiver</h3>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <h3 className="font-medium text-slate-900">Enregistrer / archiver</h3>
+            <p className="rounded-lg bg-sky-50 px-3 py-1.5 text-xs text-[#0f4c75]">
+              Date de création : <strong>{format.date(today)}</strong>
+              {' · '}
+              Âge : <strong>{formatDocumentAge(today)}</strong>
+            </p>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
+            <EntiteFilter
+              value={entite}
+              options={entites}
+              onChange={setEntite}
+              required
+              className="sm:col-span-2"
+            />
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
                 Objet / Concerne
@@ -326,14 +458,29 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
                 placeholder="Ex. Rayon A / Boîte 12"
               />
             </label>
+            {canInvisible && (
+              <label className="flex items-start gap-2 sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={invisibleTous}
+                  onChange={(e) => setInvisibleTous(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span className="text-sm text-amber-950">
+                  <strong>Invisible de tous</strong> — si coché, le document
+                  n’est exploité / vu / lu que par Documentation (privilège &gt;
+                  9) et le Superuser.
+                </span>
+              </label>
+            )}
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
-                Pièce jointe PDF
+                Pièce jointe (toutes extensions)
               </span>
               <input
                 required
                 type="file"
-                accept="application/pdf"
+                accept={ACCEPTED_DOCUMENT_ACCEPT}
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-[#0f4c75] file:px-3 file:py-1.5 file:text-sm file:text-white"
               />
@@ -344,13 +491,17 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
             disabled={saving || !file}
             className="inline-flex items-center gap-2 rounded-lg bg-[#0f4c75] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#0c3d5e] disabled:opacity-60"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArchiveIcon className="h-4 w-4" />}
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArchiveIcon className="h-4 w-4" />
+            )}
             Archiver le document
           </button>
         </form>
       )}
 
-      {tab === 'envoyer' && (
+      {tab === 'envoyer' && canSend && (
         <form
           onSubmit={(e) => void handleDispatch(e)}
           className="space-y-4 rounded-xl border border-slate-200 bg-white p-6"
@@ -358,10 +509,6 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
           <h3 className="font-medium text-slate-900">
             Envoyer vers une direction
           </h3>
-          <p className="text-sm text-slate-500">
-            Le courrier arrive chez le secrétariat de la direction choisie, avec
-            la pièce jointe du document archivé (ou une nouvelle PJ).
-          </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
@@ -374,11 +521,14 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
                 className={field}
               >
                 <option value="">Choisir…</option>
-                {archives.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    #{a.id} — {a.concerne}
-                    {a.num_folio ? ` (folio ${a.num_folio})` : ''}
-                  </option>
+                {archiveGroups.map((g) => (
+                  <optgroup key={g.label} label={`Année ${g.label}`}>
+                    {g.options.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </label>
@@ -402,7 +552,7 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
-                Note / motif de la demande
+                Note / motif
               </span>
               <textarea
                 value={note}
@@ -417,7 +567,7 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
               </span>
               <input
                 type="file"
-                accept="application/pdf"
+                accept={ACCEPTED_DOCUMENT_ACCEPT}
                 onChange={(e) => setAttachFile(e.target.files?.[0] ?? null)}
                 className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-[#0f4c75] file:px-3 file:py-1.5 file:text-sm file:text-white"
               />
@@ -434,54 +584,47 @@ export function DocumentationArchivesDashboard({ profile }: Props) {
         </form>
       )}
 
-      {tab === 'registre' && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-[#0f4c75] text-xs uppercase tracking-wide text-white">
-              <tr>
-                <th className="px-3 py-2.5">N°</th>
-                <th className="px-3 py-2.5">Date</th>
-                <th className="px-3 py-2.5">Folio</th>
-                <th className="px-3 py-2.5">Concerne</th>
-                <th className="px-3 py-2.5">Référence</th>
-                <th className="px-3 py-2.5">Émetteur</th>
-                <th className="px-3 py-2.5">PDF</th>
-              </tr>
-            </thead>
-            <tbody>
-              {archives.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
-                    Aucun document archivé
-                  </td>
-                </tr>
-              ) : (
-                archives.map((a) => (
-                  <tr key={a.id} className="border-t border-slate-100 odd:bg-slate-50/50">
-                    <td className="px-3 py-2.5 text-slate-500">{a.id}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">
-                      {format.date(a.date_doc)}
-                    </td>
-                    <td className="px-3 py-2.5 font-medium text-[#0f4c75]">
-                      {a.num_folio ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-slate-900">{a.concerne}</td>
-                    <td className="px-3 py-2.5 text-slate-600">{a.reference ?? '—'}</td>
-                    <td className="px-3 py-2.5 text-slate-700">{a.emetteur ?? '—'}</td>
-                    <td className="px-3 py-2.5 text-xs text-slate-500">
-                      {a.nom_doc_phys ?? (a.file_path ? 'PDF' : '—')}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+      {tab === 'rechercher' && (
+        <ArchivesSearchPanel
+          profile={profile}
+          scope="docs"
+          lockedEntite={entite || undefined}
+        />
       )}
 
-      {tab === 'lecture' && <DocumentPdfReader profile={profile} />}
+      {tab === 'purge' && canPurge && (
+        <ArchivesPurgePanel onPurged={() => void load()} />
+      )}
+
+      {tab === 'demandes' && <ArchivesDemandesInbox profile={profile} />}
+
+      {tab === 'registre' && (
+        <ArchivesGroupedRegister
+          archives={archives}
+          onSelectForSend={
+            canSend
+              ? (id) => {
+                  setArchiveId(String(id))
+                  setTab('envoyer')
+                  setSuccess(null)
+                  setError(null)
+                }
+              : undefined
+          }
+        />
+      )}
+
+      {tab === 'lecture' && (
+        <ArchivesPdfReader profile={profile} entite={entite || undefined} />
+      )}
 
       {tab === 'rapport' && <DocumentReport profile={profile} />}
+
+      <TransferProofModal
+        open={proofOpen}
+        payload={proof}
+        onClose={() => setProofOpen(false)}
+      />
     </div>
   )
 }

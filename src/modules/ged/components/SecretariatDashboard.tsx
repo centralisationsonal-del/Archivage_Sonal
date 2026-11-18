@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CirculationList } from '@/modules/ged/components/CirculationList'
 import { CreateDocumentForm } from '@/modules/ged/components/CreateDocumentForm'
+import { DemandeDocRequesterPanel } from '@/modules/ged/components/DemandeDocRequesterPanel'
+import { SecretariatMessageriePanel } from '@/modules/ged/components/SecretariatMessageriePanel'
+import { AgendaChefPanel } from '@/modules/ged/components/AgendaChefPanel'
+import { ArchivesSearchPanel } from '@/modules/ged/components/ArchivesSearchPanel'
+import { CadreArchivesTools } from '@/modules/ged/components/CadreArchivesTools'
+import {
+  EntiteFilter,
+  useEntiteFilter,
+} from '@/modules/ged/components/EntiteFilter'
+import { groupedArchiveOptions } from '@/modules/ged/components/ArchivesGroupedRegister'
 import {
   DashboardHeader,
   DashboardKpi,
@@ -8,17 +18,35 @@ import {
 import { DocumentPdfReader } from '@/modules/ged/components/DocumentPdfReader'
 import { DocumentReport } from '@/modules/ged/components/DocumentReport'
 import { DocumentTimeline } from '@/modules/ged/components/DocumentTimeline'
-import { useAuth } from '@/contexts/AuthContext'
+import {
+  TransferProofModal,
+  type TransferProofPayload,
+} from '@/modules/ged/components/TransferProofModal'
+import { ACCEPTED_DOCUMENT_ACCEPT } from '@/lib/documentFiles'
 import { circulationService } from '@/services/circulationService'
 import { format } from '@/lib/format'
+import { formatDocumentAge } from '@/modules/ged/lib/archivePrivileges'
 import { countPdfPages } from '@/lib/pdfPages'
-import type { Archive, Circulation, CirculationEvent, GedAgent, Profile } from '@/types/ged'
+import type {
+  Archive,
+  Circulation,
+  CirculationEvent,
+  Direction,
+  EmplacementSecretariat,
+  GedAgent,
+  Profile,
+} from '@/types/ged'
 import {
+  SECRETARIAT_CODE_LABELS,
+  type SecretariatCode,
+} from '@/types/ged'
+import {
+  Archive as ArchiveIcon,
   BookOpen,
-  Clock3,
   FileText,
   Forward,
   Inbox,
+  Loader2,
   PenLine,
   RefreshCw,
   Send,
@@ -28,14 +56,31 @@ interface Props {
   profile: Profile
 }
 
-type Tab = 'vue' | 'orienter' | 'expedier' | 'folios' | 'lecture' | 'rapport' | 'creer'
+type Tab =
+  | 'vue'
+  | 'orienter'
+  | 'expedier'
+  | 'folios'
+  | 'archiver'
+  | 'envoyer_archives'
+  | 'rechercher'
+  | 'nettoyer'
+  | 'lecture'
+  | 'rapport'
+  | 'demande_archives'
+  | 'messagerie'
+  | 'agenda'
+  | 'creer'
 
 export function SecretariatDashboard({ profile: initialProfile }: Props) {
-  const { refreshProfile } = useAuth()
   const [profile, setProfile] = useState(initialProfile)
+  const profileRef = useRef(profile)
+  profileRef.current = profile
   const [tab, setTab] = useState<Tab>('vue')
   const [aOrienter, setAOrienter] = useState<Circulation[]>([])
   const [aExpedier, setAExpedier] = useState<Circulation[]>([])
+  const [kpiOrienter, setKpiOrienter] = useState(0)
+  const [kpiExpedier, setKpiExpedier] = useState(0)
   const [folios, setFolios] = useState<Archive[]>([])
   const [selected, setSelected] = useState<Circulation | null>(null)
   const [events, setEvents] = useState<CirculationEvent[]>([])
@@ -51,51 +96,130 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
   const [pageCount, setPageCount] = useState<number | null>(null)
   const [docLoading, setDocLoading] = useState(false)
 
+  const [secArchives, setSecArchives] = useState<Archive[]>([])
+  const [emplacements, setEmplacements] = useState<EmplacementSecretariat[]>([])
+  const [directions, setDirections] = useState<Direction[]>([])
+  const [secConcerne, setSecConcerne] = useState('')
+  const [secReference, setSecReference] = useState('')
+  const [secEmplacement, setSecEmplacement] = useState('')
+  const [secEmetteur, setSecEmetteur] = useState('')
+  const [secRecepteur, setSecRecepteur] = useState('')
+  const [secFolio, setSecFolio] = useState('')
+  const [secFile, setSecFile] = useState<File | null>(null)
+  const [secSaving, setSecSaving] = useState(false)
+  const [dispatchArchiveId, setDispatchArchiveId] = useState('')
+  const [dispatchDirId, setDispatchDirId] = useState('')
+  const [dispatchNote, setDispatchNote] = useState('')
+  const [proofOpen, setProofOpen] = useState(false)
+  const [proof, setProof] = useState<TransferProofPayload | null>(null)
+  const today = new Date().toISOString().slice(0, 10)
+
+  const loadEntites = useCallback(() => circulationService.listEntites(), [])
+  const { entites, entite, setEntite } = useEntiteFilter(loadEntites)
+
   useEffect(() => {
-    setProfile(initialProfile)
+    setProfile((prev) => {
+      const next = initialProfile
+      if (
+        prev.id === next.id &&
+        prev.full_name === next.full_name &&
+        prev.direction_id === next.direction_id &&
+        prev.service_id === next.service_id &&
+        prev.matr === next.matr &&
+        (prev.secretariat_code ?? null) === (next.secretariat_code ?? null) &&
+        (prev.privilege ?? null) === (next.privilege ?? null) &&
+        (prev.direction?.libelle ?? null) === (next.direction?.libelle ?? null)
+      ) {
+        return prev
+      }
+      return next
+    })
   }, [initialProfile])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    if (!opts?.soft) setLoading(true)
     try {
-      // Recharger le profil (ex. direction réparée côté BDD)
-      const fresh = await circulationService.getCurrentProfile()
-      if (fresh) {
-        setProfile(fresh)
-        await refreshProfile()
-      }
-      const directionId = fresh?.direction_id ?? initialProfile.direction_id
-      if (!directionId) {
+      const activeProfile = profileRef.current
+      const directionId = activeProfile.direction_id
+      const deskCode = activeProfile.secretariat_code
+      if (!directionId && !deskCode) {
         setAOrienter([])
         setAExpedier([])
+        setKpiOrienter(0)
+        setKpiExpedier(0)
         setFolios([])
         setAgents([])
+        setSecArchives([])
+        setEmplacements([])
         return
       }
 
-      const [queue, folioRows, agentRows] = await Promise.all([
-        circulationService.getSecretariatQueue(directionId),
-        circulationService.getFolioRegister(directionId),
-        circulationService.listAgents({
-          directionId,
-          directionLibelle: fresh?.direction?.libelle ?? initialProfile.direction?.libelle,
-        }),
-      ])
+      const matchEntite = (c: Circulation) => {
+        if (!entite) return true
+        return (
+          (c.archive?.entite ?? '').toLowerCase() === entite.toLowerCase()
+        )
+      }
 
-      setAOrienter(queue.aOrienter)
-      setAExpedier(queue.aExpedier)
-      setFolios(folioRows)
+      const [queue, folioRows, agentRows, archives, empls, dirs] =
+        await Promise.all([
+          circulationService.getSecretariatQueue(activeProfile),
+          circulationService.getFolioRegister(activeProfile),
+          circulationService.listAgents({
+            directionId: directionId || undefined,
+            directionLibelle: activeProfile.direction?.libelle,
+            entite: entite || undefined,
+          }),
+          circulationService.listMyArchives(activeProfile, 1000, {
+            entite: entite || undefined,
+          }),
+          directionId
+            ? circulationService.listEmplacementsSecretariat(directionId)
+            : Promise.resolve([]),
+          circulationService.listDirections(),
+        ])
+
+      setAOrienter(queue.aOrienter.filter(matchEntite))
+      setAExpedier(queue.aExpedier.filter(matchEntite))
+      setKpiOrienter(queue.allOrienter.filter(matchEntite).length)
+      setKpiExpedier(queue.allExpedier.filter(matchEntite).length)
+      setFolios(
+        entite
+          ? folioRows.filter(
+              (f) =>
+                (f.entite ?? '').toLowerCase() === entite.toLowerCase(),
+            )
+          : folioRows,
+      )
       setAgents(agentRows)
+      setSecArchives(archives)
+      setEmplacements(empls)
+      setDirections(dirs)
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Erreur de chargement')
     } finally {
-      setLoading(false)
+      if (!opts?.soft) setLoading(false)
     }
-  }, [initialProfile.direction_id, initialProfile.direction?.libelle, refreshProfile])
+  }, [entite])
+
+  const dashPrimedRef = useRef(false)
 
   useEffect(() => {
-    void load()
+    // Premier passage : chargement complet ; suivants (ex. filtre entité) : soft, sans flash
+    if (!dashPrimedRef.current) {
+      dashPrimedRef.current = true
+      void load()
+    } else {
+      void load({ soft: true })
+    }
+    const t = window.setInterval(() => void load({ soft: true }), 15000)
+    return () => window.clearInterval(t)
   }, [load])
+
+  useEffect(() => {
+    if (tab === 'vue' && dashPrimedRef.current) void load({ soft: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tab only
+  }, [tab])
 
   useEffect(() => {
     if (!selected) {
@@ -116,7 +240,6 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
   }
 
   async function selectCirculation(item: Circulation, nextTab?: Tab) {
-    setSelected(item)
     setActionSuccess(null)
     setActionError(null)
     setReceiverMatr('')
@@ -125,10 +248,33 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
     setPageCount(null)
     if (nextTab) setTab(nextTab)
 
-    const existingFolio = item.archive?.num_folio?.trim() || ''
+    let claimed = item
+    try {
+      // Prise en charge exclusive : les collègues ne voient plus ce courrier
+      claimed = await circulationService.claimCirculation(item.id)
+      setSelected(claimed)
+      // Retirer des files locales les items pris par soi (rafraîchir l’état)
+      setAOrienter((prev) =>
+        prev.map((c) => (c.id === claimed.id ? claimed : c)),
+      )
+      setAExpedier((prev) =>
+        prev.map((c) => (c.id === claimed.id ? claimed : c)),
+      )
+    } catch (err) {
+      setSelected(null)
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : 'Impossible de prendre en charge ce courrier',
+      )
+      await load({ soft: true })
+      return
+    }
+
+    const existingFolio = claimed.archive?.num_folio?.trim() || ''
     setNumFolio(existingFolio)
 
-    const filePath = item.archive?.file_path
+    const filePath = claimed.archive?.file_path
     if (!filePath) {
       setActionError('Aucun fichier PDF attaché à ce courrier.')
       return
@@ -183,12 +329,29 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
       })
 
       removeFromQueues(circulationId)
+      const agentName =
+        agents.find((a) => a.matr === receiverMatr)?.full_name ??
+        result.archive?.recepteur ??
+        'l’agent concerné'
+      setProof({
+        kind: 'sec_to_agent',
+        title: 'Transmission au destinataire',
+        concerne: selected.archive?.concerne,
+        reference: selected.archive?.reference,
+        fromLabel:
+          profile.direction?.libelle
+            ? `Secrétariat ${profile.direction.libelle}`
+            : 'Secrétariat',
+        toLabels: [agentName],
+        note: note || undefined,
+      })
+      setProofOpen(true)
       resetForm()
       setActionSuccess(
-        `Document transmis à ${result.archive?.recepteur ?? 'l’agent concerné'}.`,
+        `Document transmis à ${agentName}.`,
       )
       // Actualisation complète des files
-      await load()
+      await load({ soft: true })
       if (source === 'orienter') setTab('orienter')
       else setTab('expedier')
     } catch (err) {
@@ -233,10 +396,25 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
         selected.id,
         selected.receiver_direction_id,
       )
+      const destDir =
+        directions.find((d) => d.id === selected.receiver_direction_id)
+          ?.libelle ?? 'direction destinataire'
+      setProof({
+        kind: 'sec_to_sec',
+        title: 'Expédition inter-secrétariats',
+        concerne: selected.archive?.concerne,
+        reference: selected.archive?.reference,
+        fromLabel:
+          profile.direction?.libelle
+            ? `Secrétariat ${profile.direction.libelle}`
+            : 'Secrétariat émetteur',
+        toLabels: [`Secrétariat ${destDir}`],
+      })
+      setProofOpen(true)
       removeFromQueues(selected.id)
       resetForm()
-      setActionSuccess('Courrier expédié vers la direction destinataire.')
-      await load()
+      setActionSuccess(`Courrier expédié vers ${destDir}.`)
+      await load({ soft: true })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Échec de l’expédition')
     } finally {
@@ -249,17 +427,127 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
     { id: 'orienter', label: 'À orienter', count: aOrienter.length },
     { id: 'expedier', label: 'À expédier', count: aExpedier.length },
     { id: 'folios', label: 'Registre folios', count: folios.length },
+    { id: 'archiver', label: 'Archiver' },
+    { id: 'envoyer_archives', label: 'Envoyer archives' },
+    { id: 'rechercher', label: 'Rechercher' },
+    { id: 'nettoyer', label: 'Nettoyer' },
     { id: 'lecture', label: 'Lecture PDF' },
     { id: 'rapport', label: 'Rapport' },
+    { id: 'demande_archives', label: 'Demande Archives' },
+    { id: 'messagerie', label: 'Messagerie Sec_*', count: undefined },
+    { id: 'agenda', label: 'Agenda du Chef' },
     { id: 'creer', label: 'Nouveau courrier' },
   ]
 
-  if (!profile.direction_id && !loading) {
+  const archiveGroups = groupedArchiveOptions(secArchives)
+  const field =
+    'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none ring-[#0f4c75]/30 focus:ring-2'
+
+  async function handleSecArchive(e: React.FormEvent) {
+    e.preventDefault()
+    if (!secFile || !secConcerne || !secReference.trim() || !secEmplacement) {
+      setActionError('Objet, référence, emplacement et fichier sont obligatoires.')
+      return
+    }
+    if (!entite) {
+      setActionError('Sélectionnez l’entité / instance de provenance.')
+      return
+    }
+    setSecSaving(true)
+    setActionError(null)
+    setActionSuccess(null)
+    try {
+      const archived = await circulationService.registerSecretariatArchive({
+        concerne: secConcerne,
+        reference: secReference.trim(),
+        emplacement: secEmplacement,
+        emetteur: secEmetteur || undefined,
+        recepteur: secRecepteur || undefined,
+        numFolio: secFolio || undefined,
+        entite,
+        file: secFile,
+      })
+      setActionSuccess(
+        `Document archivé (réf. ${archived.reference}) — ${entite} — création ${format.date(today)} — âge ${formatDocumentAge(today)}.`,
+      )
+      setSecConcerne('')
+      setSecReference('')
+      setSecEmplacement('')
+      setSecEmetteur('')
+      setSecRecepteur('')
+      setSecFolio('')
+      setSecFile(null)
+      await load({ soft: true })
+      setTab('rechercher')
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Échec archivage')
+    } finally {
+      setSecSaving(false)
+    }
+  }
+
+  async function handleSecDispatch(e: React.FormEvent) {
+    e.preventDefault()
+    if (!dispatchArchiveId || !dispatchDirId) return
+    setSecSaving(true)
+    setActionError(null)
+    setActionSuccess(null)
+    try {
+      await circulationService.dispatchArchiveToDirection({
+        archiveId: Number(dispatchArchiveId),
+        receiverDirectionId: dispatchDirId,
+        note: dispatchNote || undefined,
+      })
+      const dir = directions.find((d) => d.id === dispatchDirId)
+      const arch = secArchives.find((a) => a.id === Number(dispatchArchiveId))
+      const isArchives =
+        /document|archiv/i.test(dir?.libelle ?? '') ||
+        /document|archiv/i.test(dir?.code ?? '')
+      setProof({
+        kind: isArchives ? 'sec_to_archives' : 'sec_to_sec',
+        title: isArchives
+          ? 'Envoi vers Documentation & Archives'
+          : 'Envoi d’archive vers un secrétariat',
+        concerne: arch?.concerne,
+        reference: arch?.reference,
+        fromLabel:
+          profile.direction?.libelle
+            ? `Secrétariat ${profile.direction.libelle}`
+            : 'Secrétariat',
+        toLabels: [
+          isArchives
+            ? 'Documentation & Archives'
+            : `Secrétariat ${dir?.libelle ?? 'cible'}`,
+        ],
+        note: dispatchNote || undefined,
+      })
+      setProofOpen(true)
+      setActionSuccess(
+        `Archive envoyée au secrétariat de ${dir?.libelle ?? 'la direction'} (partage par envoi).`,
+      )
+      setDispatchArchiveId('')
+      setDispatchDirId('')
+      setDispatchNote('')
+      await load({ soft: true })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Échec envoi')
+    } finally {
+      setSecSaving(false)
+    }
+  }
+
+  if (!profile.direction_id && !profile.secretariat_code && !loading) {
     return (
       <div className="space-y-4">
+        <DashboardHeader
+          eyebrow="Secrétariat de direction"
+          title="Parapheur virtuel"
+          subtitle="Affectation de bureau Sec_* / direction requise"
+        />
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-sm text-amber-800">
-          Aucune direction n’est rattachée à votre profil secrétariat. Contactez le
-          superuser pour l’affectation, puis actualisez.
+          Aucun bureau secrétariat (Sec_Adg, Sec_Df, …) ni direction n’est
+          rattaché à votre profil. Contactez le Superuser pour renseigner le
+          profil TbLogin / secretariat_code, puis actualisez.
         </div>
         <button
           type="button"
@@ -304,7 +592,13 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
       <DashboardHeader
         eyebrow="Secrétariat de direction"
         title="Parapheur virtuel"
-        subtitle={`Réception, orientation et expédition — ${profile.direction?.libelle ?? 'Direction'}`}
+        subtitle={`Réception, orientation et expédition — ${
+          profile.secretariat_code
+            ? (SECRETARIAT_CODE_LABELS[
+                profile.secretariat_code as SecretariatCode
+              ] ?? profile.secretariat_code)
+            : (profile.direction?.libelle ?? 'Direction')
+        }`}
         action={
           <button
             type="button"
@@ -316,6 +610,23 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
           </button>
         }
       />
+
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <EntiteFilter
+          value={entite}
+          options={entites}
+          onChange={setEntite}
+          required
+          label="Entité / instance (filtre listes, agents & archivage)"
+          className="max-w-md"
+        />
+        {!entite && (
+          <p className="mt-2 text-xs text-amber-700">
+            Sélectionnez une entité pour n’afficher que les documents et agents
+            actifs de cette instance.
+          </p>
+        )}
+      </div>
 
       {(actionSuccess || actionError) && (
         <div
@@ -333,28 +644,36 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
         <DashboardKpi
           icon={Inbox}
           label="À orienter"
-          value={aOrienter.length}
-          hint="Courriers entrants à diriger"
+          value={kpiOrienter}
+          hint="Courriers entrants à diriger (direction)"
           tone="amber"
         />
         <DashboardKpi
           icon={Send}
           label="À expédier"
-          value={aExpedier.length}
-          hint="Sorties / transmissions"
+          value={kpiExpedier}
+          hint="Sorties / transmissions (direction)"
           tone="sky"
         />
         <DashboardKpi
           icon={BookOpen}
           label="Folios"
           value={folios.length}
-          hint="Registre de la direction"
+          hint={
+            entite
+              ? `Registre de la direction · ${entite}`
+              : 'Registre de la direction'
+          }
         />
         <DashboardKpi
-          icon={Clock3}
-          label="En file"
-          value={aOrienter.length + aExpedier.length}
-          hint="Charge totale du parapheur"
+          icon={ArchiveIcon}
+          label="Archivés"
+          value={secArchives.length}
+          hint={
+            entite
+              ? `Archives du secrétariat · ${entite}`
+              : 'Documents archivés dans ce compte secrétariat'
+          }
           tone="slate"
         />
       </div>
@@ -424,7 +743,7 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
             onCreated={() => {
               void (async () => {
                 setActionSuccess('Document créé.')
-                await load()
+                await load({ soft: true })
                 setTab('expedier')
               })()
             }}
@@ -601,40 +920,280 @@ export function SecretariatDashboard({ profile: initialProfile }: Props) {
 
       {tab === 'folios' && (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Folio</th>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Concerne</th>
-                <th className="px-4 py-3">Référence</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {folios.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-4 py-10 text-center text-slate-500">
-                    Aucun folio enregistré
-                  </td>
-                </tr>
-              ) : (
-                folios.map((f) => (
-                  <tr key={f.id} className="hover:bg-slate-50/80">
-                    <td className="px-4 py-3 font-medium text-teal-800">{f.num_folio}</td>
-                    <td className="px-4 py-3 text-slate-600">{format.date(f.date_doc)}</td>
-                    <td className="px-4 py-3 text-slate-800">{f.concerne}</td>
-                    <td className="px-4 py-3 text-slate-500">{f.reference ?? '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <h3 className="font-medium text-slate-900">Registre des folios</h3>
+            <p className="text-xs text-slate-500">
+              Documents liés à votre direction / traités
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {folios.length === 0 && (
+              <p className="px-4 py-8 text-center text-sm text-slate-500">
+                Aucun folio enregistré.
+              </p>
+            )}
+            {folios.map((f) => (
+              <div key={f.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{f.concerne}</p>
+                  <p className="text-xs text-slate-500">
+                    Folio {f.num_folio || '—'} · {format.date(f.date_creation || f.date_doc)}
+                    {' · Âge '}
+                    {formatDocumentAge(f.date_creation || f.date_doc)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {tab === 'rapport' && <DocumentReport profile={profile} />}
+      {tab === 'archiver' && (
+        <form
+          onSubmit={(e) => void handleSecArchive(e)}
+          className="space-y-4 rounded-xl border border-slate-200 bg-white p-6"
+        >
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <h3 className="inline-flex items-center gap-2 font-medium text-slate-900">
+              <ArchiveIcon className="h-4 w-4 text-[#0f4c75]" />
+              Archiver (secrétariat)
+            </h3>
+            <p className="rounded-lg bg-sky-50 px-3 py-1.5 text-xs text-[#0f4c75]">
+              Création : <strong>{format.date(today)}</strong> · Âge :{' '}
+              <strong>{formatDocumentAge(today)}</strong>
+            </p>
+          </div>
+          <p className="text-sm text-slate-500">
+            Documents visibles uniquement par votre secrétariat, jusqu’à envoi
+            ordonné vers une autre direction.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <EntiteFilter
+              value={entite}
+              options={entites}
+              onChange={setEntite}
+              required
+              className="sm:col-span-2"
+            />
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Objet / concerne
+              </span>
+              <input
+                required
+                className={field}
+                value={secConcerne}
+                onChange={(e) => setSecConcerne(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Référence (unique secrétariat)
+              </span>
+              <input
+                required
+                className={field}
+                value={secReference}
+                onChange={(e) => setSecReference(e.target.value)}
+                list="sec-refs"
+              />
+              <datalist id="sec-refs">
+                {secArchives
+                  .map((a) => a.reference)
+                  .filter(Boolean)
+                  .map((r) => (
+                    <option key={r!} value={r!} />
+                  ))}
+              </datalist>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Emplacement
+              </span>
+              <select
+                required
+                className={field}
+                value={secEmplacement}
+                onChange={(e) => setSecEmplacement(e.target.value)}
+              >
+                <option value="">Choisir…</option>
+                {emplacements.map((em) => (
+                  <option key={em.id} value={em.libelle}>
+                    {em.code} — {em.libelle}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Expéditeur
+              </span>
+              <input
+                className={field}
+                value={secEmetteur}
+                onChange={(e) => setSecEmetteur(e.target.value)}
+                placeholder={profile.full_name}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Destinataire
+              </span>
+              <input
+                className={field}
+                value={secRecepteur}
+                onChange={(e) => setSecRecepteur(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Folio
+              </span>
+              <input
+                className={field}
+                value={secFolio}
+                onChange={(e) => setSecFolio(e.target.value)}
+              />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+                Fichier
+              </span>
+              <input
+                required
+                type="file"
+                accept={ACCEPTED_DOCUMENT_ACCEPT}
+                onChange={(e) => setSecFile(e.target.files?.[0] ?? null)}
+                className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-[#0f4c75] file:px-3 file:py-1.5 file:text-sm file:text-white"
+              />
+            </label>
+          </div>
+          <button
+            type="submit"
+            disabled={secSaving || !secFile}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#0f4c75] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#0c3d5e] disabled:opacity-60"
+          >
+            {secSaving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArchiveIcon className="h-4 w-4" />
+            )}
+            Archiver
+          </button>
+        </form>
+      )}
 
+      {tab === 'envoyer_archives' && (
+        <form
+          onSubmit={(e) => void handleSecDispatch(e)}
+          className="space-y-4 rounded-xl border border-slate-200 bg-white p-6"
+        >
+          <h3 className="font-medium text-slate-900">
+            Envoyer une archive (ordre du secrétariat)
+          </h3>
+          <p className="text-sm text-slate-500">
+            Partage = envoi : Documentation / autres directions ne voient le
+            document qu’après cet envoi.
+          </p>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+              Archive du secrétariat
+            </span>
+            <select
+              required
+              className={field}
+              value={dispatchArchiveId}
+              onChange={(e) => setDispatchArchiveId(e.target.value)}
+            >
+              <option value="">Choisir…</option>
+              {archiveGroups.map((g) => (
+                <optgroup key={g.label} label={`Année ${g.label}`}>
+                  {g.options.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+              Direction destinataire
+            </span>
+            <select
+              required
+              className={field}
+              value={dispatchDirId}
+              onChange={(e) => setDispatchDirId(e.target.value)}
+            >
+              <option value="">Choisir…</option>
+              {directions.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.code} — {d.libelle}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium uppercase text-slate-500">
+              Note
+            </span>
+            <textarea
+              className={field}
+              rows={2}
+              value={dispatchNote}
+              onChange={(e) => setDispatchNote(e.target.value)}
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={secSaving || !dispatchArchiveId || !dispatchDirId}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#0f4c75] px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {secSaving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            Envoyer
+          </button>
+        </form>
+      )}
+
+      {tab === 'rechercher' && (
+        <ArchivesSearchPanel
+          profile={profile}
+          scope="secretariat"
+          emplacementOptions={emplacements.map((e) => e.libelle)}
+          lockedEntite={entite || undefined}
+        />
+      )}
+
+      {tab === 'nettoyer' && (
+        <CadreArchivesTools
+          profile={profile}
+          mode="nettoyer"
+          scope="secretariat"
+          onDone={() => void load({ soft: true })}
+        />
+      )}
+
+      {tab === 'rapport' && <DocumentReport profile={profile} />}
+      {tab === 'demande_archives' && (
+        <DemandeDocRequesterPanel profile={profile} />
+      )}
+      {tab === 'messagerie' && (
+        <SecretariatMessageriePanel profile={profile} />
+      )}
+      {tab === 'agenda' && <AgendaChefPanel profile={profile} />}
       {tab === 'lecture' && <DocumentPdfReader profile={profile} />}
+
+      <TransferProofModal
+        open={proofOpen}
+        payload={proof}
+        onClose={() => setProofOpen(false)}
+      />
     </div>
   )
 }

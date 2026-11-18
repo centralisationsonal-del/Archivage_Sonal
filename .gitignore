@@ -29,3 +29,12 @@ identifiants_supabase.txt
 *.njsproj
 *.sln
 *.sw?
+
+# Local Netlify folder
+.netlify
+
+# Sauvegardes GED (conserver le dossier)
+backup/*.json
+!backup/.gitkeep
+
+_*.mjs

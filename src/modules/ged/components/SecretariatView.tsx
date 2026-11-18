@@ -28,14 +28,14 @@ export function SecretariatView({ profile }: Props) {
 
   const load = useCallback(async () => {
     if (!profile.direction_id) return
-    const queue = await circulationService.getSecretariatQueue(profile.direction_id)
+    const queue = await circulationService.getSecretariatQueue(profile)
     setAOrienter(queue.aOrienter)
     setAExpedier(queue.aExpedier)
-    setFolios(await circulationService.getFolioRegister(profile.direction_id))
+    setFolios(await circulationService.getFolioRegister(profile))
     setAgents(
       await circulationService.listAgents({ directionId: profile.direction_id }),
     )
-  }, [profile.direction_id])
+  }, [profile])
 
   useEffect(() => {
     void load()
@@ -48,6 +48,21 @@ export function SecretariatView({ profile }: Props) {
     }
     void circulationService.getTimeline(selected.id).then(setEvents)
   }, [selected])
+
+  async function selectForTreatment(item: Circulation) {
+    try {
+      const claimed = await circulationService.claimCirculation(item.id)
+      setSelected(claimed)
+    } catch (err) {
+      setSelected(null)
+      window.alert(
+        err instanceof Error
+          ? err.message
+          : 'Impossible de prendre en charge ce courrier',
+      )
+      await load()
+    }
+  }
 
   async function handleOrient(e: React.FormEvent) {
     e.preventDefault()
@@ -113,14 +128,18 @@ export function SecretariatView({ profile }: Props) {
             <CirculationList
               items={aOrienter}
               emptyLabel="Aucun courrier en attente d’orientation"
-              onSelect={setSelected}
+              onSelect={(item) => {
+                void selectForTreatment(item)
+              }}
             />
           )}
           {tab === 'expedier' && (
             <CirculationList
               items={aExpedier}
               emptyLabel="Aucun courrier à expédier"
-              onSelect={setSelected}
+              onSelect={(item) => {
+                void selectForTreatment(item)
+              }}
             />
           )}
           {tab === 'folios' && (
